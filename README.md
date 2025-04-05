@@ -28,7 +28,7 @@ pip install -r requirements.txt
 ```
 ### 3. 🖥️ Running the Server
 ```
-cd server
+cd Server-RPi
 python server.py
 ```
 Server will run on `http://<your-ip>:5000`
@@ -37,7 +37,7 @@ Tracks clients, sync metadata, and coordinates file transfers.
 
 ### 4. 💻 Running the Client
 ```
-cd client
+cd Client-PC
 python c1.py
 ```
 On first run, a web browser will open asking for:
