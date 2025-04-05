@@ -31,7 +31,7 @@ pip install -r requirements.txt
 cd server
 python server.py
 ```
-Server will run on http://<your-ip>:5000
+Server will run on `http://<your-ip>:5000`
 
 Tracks clients, sync metadata, and coordinates file transfers.
 
