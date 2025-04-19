@@ -1,19 +1,253 @@
-<!-- setup.html -->
 <!DOCTYPE html>
 <html>
 <head>
     <title>Client Setup</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 1.5s ease;
+        }
+
+        .container {
+            background-color: white;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            width: 350px;
+            animation: slideUp 0.8s ease;
+        }
+
+        h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+
+        label {
+            font-weight: 500;
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+        }
+
+        a{
+            cursor: pointer;
+            font-weight: 500;
+            display: block;
+            color: #555;
+            margin-bottom: 8px;
+        }
+
+        a:hover{
+            color: #333;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            font-size: 14px;
+            padding: 10px 14px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
+            outline: none;
+        }
+
+        input[type="number"] {
+            width: 100%;
+            font-size: 12px;
+            padding: 10px 12px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        input[type="number"]:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
+            outline: none;
+        }
+
+        input[type="submit"] {
+            background-color: #667eea;
+            color: white;
+            border: none;
+            padding: 12px;
+            width: 100%;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.2s;
+        }
+
+        input[type="submit"]:hover {
+            background-color: #5a67d8;
+            transform: translateY(-2px);
+        }
+
+        .server_list{
+            display: flex; 
+            align-items: start; 
+            gap: 10px;
+        }
+
+        .styled-select{
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+            font-family: inherit;
+            font-size: 14px;
+            background-color: white;
+            color: #333;
+        }
+
+        .styled-select:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
+            outline: none;
+        }
+
+        .server_list button {
+            height: 43px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            background-color: #f0f0f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .server_list button:hover {
+            background-color: #e0e0e0;
+        }
+                
+        svg {
+            width: 25px;
+            height: 25px;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(30px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+    </style>
 </head>
 <body>
+    <div class="container">
     <h2>Client Configuration</h2>
     <form action="/submit" method="post">
         <label>Client ID:</label>
-        <input type="text" name="client_id" required><br><br>
+        <input type="text" name="client_id" required placeholder="e.g. Client-1"><br>
 
         <label>Full Folder Path:</label>
-        <input type="text" name="folder_path" required placeholder="e.g. D:/MySyncFolder"><br><br>
+        <input type="text" name="folder_path" required placeholder="e.g. D:/MySyncFolder"><br>
 
+        <label>Select Server:</label>
+        <div class="server_list">
+            <select id="server_select" name="server_url" class="styled-select" required>
+                <option value="">-- Discovering Servers --</option>
+            </select>
+            <button type="button" onclick="loadServers()" title="Refresh Server List">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+                    <path fill="#667eea" d="M142.9 142.9c-17.5 17.5-30.1 38-37.8 59.8c-5.9 16.7-24.2 25.4-40.8 19.5s-25.4-24.2-19.5-40.8C55.6 150.7 73.2 122 97.6 97.6c87.2-87.2 228.3-87.5 315.8-1L455 55c6.9-6.9 17.2-8.9 26.2-5.2s14.8 12.5 14.8 22.2l0 128c0 13.3-10.7 24-24 24l-8.4 0c0 0 0 0 0 0L344 224c-9.7 0-18.5-5.8-22.2-14.8s-1.7-19.3 5.2-26.2l41.1-41.1c-62.6-61.5-163.1-61.2-225.3 1zM16 312c0-13.3 10.7-24 24-24l7.6 0 .7 0L168 288c9.7 0 18.5 5.8 22.2 14.8s1.7 19.3-5.2 26.2l-41.1 41.1c62.6 61.5 163.1 61.2 225.3-1c17.5-17.5 30.1-38 37.8-59.8c5.9-16.7 24.2-25.4 40.8-19.5s25.4 24.2 19.5 40.8c-10.8 30.6-28.4 59.3-52.9 83.8c-87.2 87.2-228.3 87.5-315.8 1L57 457c-6.9 6.9-17.2 8.9-26.2 5.2S16 449.7 16 440l0-119.6 0-.7 0-7.6z"/>
+                </svg>
+            </button>
+        </div>
+        <a class='advanced'>Advance Options</a>
+        <div id='advancedOptions'>
+            <label>Sync Duration (sec):</label>
+            <input type="number" name="sync_duration" required value="15"><br>
+        </div>
         <input type="submit" value="Start Sync">
     </form>
+    </div>
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const advancedOptions = document.getElementById("advancedOptions");
+            const advancedButtons = document.querySelectorAll(".advanced");
+
+            // Hide the advancedOptions on load
+            advancedOptions.style.display = "none";
+
+            // Attach click listeners to all elements with class "advanced"
+            advancedButtons.forEach(function (btn) {
+                btn.addEventListener("click", function () {
+                    if (advancedOptions.style.display === "none") {
+                        advancedOptions.style.display = "block";
+                        advancedOptions.style.maxHeight = advancedOptions.scrollHeight + "px";
+                    } else {
+                        advancedOptions.style.display = "none";
+                    }
+                });
+            });
+        });
+        async function loadServers() {
+            const dropdown = document.getElementById('server_select');
+            dropdown.innerHTML = '<option>🔍 Searching...</option>';
+
+            try {
+                const res = await fetch('/discover_servers');
+                const servers = await res.json();
+                dropdown.innerHTML = "";
+
+                if (servers.length === 0) {
+                    const opt = document.createElement('option');
+                    opt.textContent = "No servers found";
+                    opt.disabled = true;
+                    dropdown.appendChild(opt);
+                    return;
+                }
+
+                servers.forEach(server => {
+                    const option = document.createElement('option');
+                    option.value = server.ip;
+                    option.textContent = `${server.name} (${server.ip})`;
+                    dropdown.appendChild(option);
+                });
+            } catch (err) {
+                dropdown.innerHTML = '<option>Error fetching servers</option>';
+                console.error("Error discovering servers:", err);
+            }
+        }
+        window.onload = loadServers;
+    </script>
 </body>
 </html>

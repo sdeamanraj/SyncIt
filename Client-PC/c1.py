@@ -1,10 +1,12 @@
-import os
+import hashlib
+import ipaddress
 import json
+import os
 import requests
+import socket
 import time
 import threading
 import webbrowser
-import hashlib
 from flask import Flask, jsonify, send_file, request, render_template
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -12,12 +14,12 @@ from watchdog.events import FileSystemEventHandler
 app = Flask(__name__, template_folder=".")
 
 SERVER_URL = "http://192.168.1.7:5000"
-CLIENT_PORT = 6001  # Change for each client (6002, 6003, etc.)
+CLIENT_PORT = 6001  # Change for each client (if running in same system)
 SETUP_FILE = "./client_setup_done"
 SYNC_FOLDER = ""
 CLIENT_ID = ""
 METADATA_FILE = ""
-SYNC_TIME = 15
+SYNC_TIME = 30
 
 # ------------------ Setup and Configuration ------------------
 
@@ -27,17 +29,62 @@ def index():
 
 @app.route("/submit", methods=["POST"])
 def handle_form():
-    global CLIENT_ID, SYNC_FOLDER, METADATA_FILE
+    global CLIENT_ID, SYNC_FOLDER, METADATA_FILE, SERVER_URL, SYNC_TIME
 
     CLIENT_ID = request.form["client_id"]
     SYNC_FOLDER = request.form["folder_path"]
+    SERVER_URL = f"http://{request.form['server_url']}:5000"
     METADATA_FILE = f"./{CLIENT_ID}_metadata.json"
+    SYNC_TIME = int(request.form["sync_duration"])
 
     with open(SETUP_FILE, "w") as f:
-        f.write(f"{CLIENT_ID}\n{SYNC_FOLDER}")
+        f.write(f"{CLIENT_ID}\n{SYNC_FOLDER}\n{SERVER_URL}\n{SYNC_TIME}")
 
     threading.Thread(target=start_sync_process, daemon=True).start()
-    return "<h3>Setup complete. You can close this tab.</h3>"
+    return '''
+    <script>
+        alert("✅ Client registered successfully");
+        if (window.close) {
+            window.close();
+        } else {
+            document.body.innerHTML = "<h3 style='text-align:center; margin-top:20%; font-family:sans-serif;'>Setup completed. You can now close this tab.</h3>";
+        }
+    </script>
+    '''
+
+@app.route("/discover_servers")
+def discover_servers():
+    port = 5000
+    discovered = []
+
+    hostname = socket.gethostname()
+    local_ip = socket.gethostbyname(hostname)
+    
+    ip_parts = local_ip.split('.')
+    subnet = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
+    network = ipaddress.ip_network(subnet, strict=False)
+
+    def check_server(ip):
+        try:
+            r = requests.get(f"http://{ip}:{port}/server_name", timeout=0.4)
+            if r.status_code == 200:
+                name = r.json().get("name", f"Server @ {ip}")
+                discovered.append({"ip": ip, "name": name})
+        except:
+            pass
+
+    threads = []
+    for ip in network.hosts():  
+        # if str(ip) == local_ip:
+        #     continue  # Skip own IP
+        t = threading.Thread(target=check_server, args=(str(ip),))
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
+
+    return jsonify(discovered)
 
 # ------------------ File Sync and Metadata ------------------
 
@@ -250,6 +297,8 @@ if __name__ == "__main__":
     #         lines = f.read().splitlines()
     #         CLIENT_ID = lines[0]
     #         SYNC_FOLDER = lines[1]
+    #         SERVER_URL = lines[2]
+    #         SYNC_TIME = int(lines[3])
     #         METADATA_FILE = f"./{CLIENT_ID}_metadata.json"
 
     #     threading.Thread(target=start_sync_process, daemon=True).start()
