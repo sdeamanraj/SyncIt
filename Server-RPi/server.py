@@ -1,11 +1,12 @@
-from flask import Flask, request, jsonify
-import os
 import json
+import os
 import requests
 import socket
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+SERVER_NAME = "File Sync Server"
 METADATA_FILE = "./server_metadata.json"
 CLIENTS_FILE = "./clients.json"
 
@@ -60,6 +61,10 @@ def is_client_alive(ip, port, timeout=2):
         return False
 
 # ------------------ Client Endpoints ------------------
+
+@app.route("/server_name", methods=["GET"])
+def get_server_name():
+    return jsonify({"name": SERVER_NAME})
 
 @app.route("/register", methods=["POST"])
 def register_client():
