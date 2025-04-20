@@ -1,4 +1,5 @@
-# requirements.txt
-flask
-requests
-watchdog
+flask>=2.2.5
+watchdog>=3.0.0
+requests>=2.31.0
+pymongo>=4.6.1
+tqdm>=4.66.2
