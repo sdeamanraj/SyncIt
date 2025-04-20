@@ -8,18 +8,22 @@ import time
 import threading
 import webbrowser
 from flask import Flask, jsonify, send_file, request, render_template
+from pymongo import MongoClient
+from tqdm import tqdm
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 app = Flask(__name__, template_folder=".")
 
-SERVER_URL = "http://192.168.1.7:5000"
-CLIENT_PORT = 6001  # Change for each client (if running in same system)
+SERVER_URL = "http://10.20.36.113:5000"
+CLIENT_PORT = 6001  # Change for each client (6002, 6003, etc.)
 SETUP_FILE = "./client_setup_done"
 SYNC_FOLDER = ""
 CLIENT_ID = ""
 METADATA_FILE = ""
 SYNC_TIME = 30
+SERVER_NAME = ""
+currently_downloading = False
 
 # ------------------ Setup and Configuration ------------------
 
@@ -57,8 +61,15 @@ def discover_servers():
     port = 5000
     discovered = []
 
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
+    def get_local_ip():
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+
+    local_ip = get_local_ip()
     
     ip_parts = local_ip.split('.')
     subnet = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
@@ -86,6 +97,18 @@ def discover_servers():
 
     return jsonify(discovered)
 
+def fetch_server_name():
+    global SERVER_NAME
+    try:
+        response = requests.get(f"{SERVER_URL}/server_name", timeout=5)
+        if response.status_code == 200:
+            SERVER_NAME = response.json().get("name")
+            print(f"Connected to server: {SERVER_NAME}")
+        else:
+            print("Failed to fetch server name.")
+    except Exception as e:
+        print(f"Error fetching server name: {e}")
+
 # ------------------ File Sync and Metadata ------------------
 
 def compute_file_hash(file_path):
@@ -103,12 +126,22 @@ def initialize_client():
             json.dump({}, f)
 
 def load_metadata():
-    with open(METADATA_FILE, "r") as f:
-        return json.load(f)
+    if os.path.exists(METADATA_FILE):
+        try:
+            with open(METADATA_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Warning: Failed to load metadata from {METADATA_FILE}: {e}")
+            return {}  # Return empty metadata if file corrupt or unreadable
+    else:
+        return {}
 
 def save_metadata(metadata):
-    with open(METADATA_FILE, "w") as f:
-        json.dump(metadata, f, indent=4)
+    try:
+        with open(METADATA_FILE, "w") as f:
+            json.dump(metadata, f, indent=4)
+    except IOError as e:
+        print(f"Error: Failed to save metadata to {METADATA_FILE}: {e}")
 
 def register_with_server():
     while True:
@@ -138,7 +171,7 @@ def scan_folder():
     return metadata
 
 def update_server_metadata():
-    metadata = scan_folder()
+    metadata = load_metadata()
     while True:
         try:
             requests.post(f"{SERVER_URL}/update_metadata", json={"client_id": CLIENT_ID, "metadata": metadata})
@@ -191,39 +224,74 @@ def delete_local_file(file_name):
         print(f"Deleted {file_name} from {SYNC_FOLDER}.")
 
 def download_file_from_peer(file_name, peer_ip, peer_port, peer_folder):
+    global currently_downloading
     file_url = f"http://{peer_ip}:{peer_port}/download/{file_name}"
     try:
+        currently_downloading = True
+        start_time = time.time()
         response = requests.get(file_url, stream=True, timeout=10)
         if response.status_code == 200:
+            total_size = int(response.headers.get('content-length', 0))
             file_path = os.path.join(SYNC_FOLDER, file_name)
             with open(file_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024):
-                    f.write(chunk)
-            print(f"Downloaded {file_name} from {peer_ip}:{peer_port} at {peer_folder}")
+                for chunk in tqdm(response.iter_content(chunk_size=4096), total=total_size//4096, unit='KB', unit_scale=True, desc=file_name):
+                    if chunk:
+                        f.write(chunk)
+
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"Downloaded {file_name} from {peer_ip}:{peer_port} at {peer_folder} in {duration:.2f} seconds.")
+        update_file_metadata(file_path)
+        update_server_metadata()
     except requests.exceptions.RequestException:
         print(f"Failed to download {file_name} from {peer_ip}:{peer_port}")
+    finally:
+        currently_downloading = False
 
 # ------------------ Watchdog Monitoring ------------------
 
 class SyncFolderMonitor(FileSystemEventHandler):
     def on_created(self, event):
+        global currently_downloading
+        if currently_downloading:
+            return
         if not event.is_directory:
             print(f"New file detected: {event.src_path}")
-            scan_folder()
-            update_server_metadata()
+            update_file_metadata(event.src_path)
 
     def on_deleted(self, event):
+        global currently_downloading
+        if currently_downloading:
+            return
         if not event.is_directory:
             file_name = os.path.basename(event.src_path)
             notify_server_file_deleted(file_name)
-            scan_folder()
-            update_server_metadata()
 
     def on_modified(self, event):
+        global currently_downloading
+        if currently_downloading:
+            return
         if not event.is_directory:
             print(f"File modified: {event.src_path}")
-            scan_folder()
-            update_server_metadata()
+            update_file_metadata(event.src_path)
+
+def update_file_metadata(file_path):
+    metadata = load_metadata()
+    file_name = os.path.basename(file_path)
+    try:
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            with open(file_path, "rb") as f:
+                f.read(1)
+            metadata[file_name] = {
+                "size": os.path.getsize(file_path),
+                "hash": compute_file_hash(file_path),
+                "last_modified": os.path.getmtime(file_path)
+            }
+            save_metadata(metadata)
+        else:
+            print(f"File {file_path} is empty or not ready yet. Skipping metadata update.")
+    except Exception as e:
+        print(f"Error reading file {file_path}: {e}. Skipping this file.")
 
 def start_monitoring():
     observer = Observer()
@@ -236,31 +304,53 @@ def start_monitoring():
         observer.stop()
     observer.join()
 
+# ------------------ Handling Dynamic IP change ------------------
+
+def check_server_ip_from_mongo():
+    global SERVER_URL
+    try:
+        client = MongoClient("mongodb+srv://amanrajmsrit:Project%4016@syncit.hehvd.mongodb.net/?retryWrites=true&w=majority")
+        db = client['sync_db']
+        collection = db['device_info']
+
+        server_info = collection.find_one({"server_name": SERVER_NAME})
+        if server_info:
+            new_ip = server_info["ip"]
+            if new_ip and new_ip != SERVER_URL.split("//")[1].split(":")[0]:
+                print(f"Server IP has changed. Updating to {new_ip}")
+                SERVER_URL = f"http://{new_ip}:5000"
+            else:
+                print("Server IP not changed or not updated yet.")
+    except Exception as e:
+        print(f"Error checking server IP from Mongo: {e}")
+
 # ------------------ Periodic Tasks ------------------
 
 def server_check():
     while True:
-        time.sleep(SYNC_TIME)
         try:
-            requests.get(f"{SERVER_URL}/get_clients", timeout=5)
-            print("Server is back online!")
-            check_sync()
+            if currently_downloading:
+                print("Currently downloading. Skipping sync check this time.")
+            else:
+                requests.get(f"{SERVER_URL}/get_clients", timeout=5)
+                update_server_metadata()
+                check_sync()
+            time.sleep(SYNC_TIME)
         except requests.exceptions.RequestException:
-            print("Server still offline...")
+            print("Server offline...")
+            try:
+                check_server_ip_from_mongo()
+            except Exception as e:
+                print(f"Error while checking MongoDB for server IP: {e}")
             time.sleep(60)
-
-def periodic_metadata_updater():
-    while True:
-        scan_folder()
-        update_server_metadata()
-        time.sleep(SYNC_TIME)
 
 def start_sync_process():
     initialize_client()
     register_with_server()
+    scan_folder()
+    fetch_server_name()
     update_server_metadata()
 
-    threading.Thread(target=periodic_metadata_updater, daemon=True).start()
     threading.Thread(target=server_check, daemon=True).start()
     start_monitoring()
 

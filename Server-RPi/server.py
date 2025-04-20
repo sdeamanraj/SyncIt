@@ -2,7 +2,10 @@ import json
 import os
 import requests
 import socket
+import time
+import threading
 from flask import Flask, request, jsonify
+from pymongo import MongoClient
 
 app = Flask(__name__)
 
@@ -60,6 +63,52 @@ def is_client_alive(ip, port, timeout=2):
     except:
         return False
 
+# ------------------ Handling Dynamic IP change ------------------
+
+def update_server_ip_in_mongo(new_ip):
+    try:
+        client = MongoClient("mongodb+srv://amanrajmsrit:Project%4016@syncit.hehvd.mongodb.net/?retryWrites=true&w=majority", serverSelectionTimeoutMS=5000)
+        db = client['sync_db']
+        collection = db['device_info']
+
+        collection.update_one(
+            {"server_name": SERVER_NAME},
+            {"$set": {"ip": new_ip, "last_updated": time.time()}},
+            upsert=True
+        )
+        print(f"Updated server IP in MongoDB: {new_ip}")
+    except Exception as e:
+        print(f"Error updating server IP in MongoDB: {e}")
+
+def get_current_server_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(2)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception as e:
+        print(f"Failed to get current server IP: {e}")
+        return None
+
+def ip_monitoring_thread():
+    previous_ip = None
+    while True:
+        current_ip = get_current_server_ip()
+        if current_ip:
+            if previous_ip != current_ip:
+                print(f"Server IP changed from {previous_ip} to {current_ip}")
+                update_server_ip_in_mongo(current_ip)
+                previous_ip = current_ip
+            else:
+                print("Server IP unchanged.")
+        else:
+            print("Cannot detect current IP.")
+
+        # Sleep for 1 hour (3600 seconds)
+        time.sleep(3600)
+
 # ------------------ Client Endpoints ------------------
 
 @app.route("/server_name", methods=["GET"])
@@ -92,6 +141,17 @@ def update_metadata():
     metadata = load_metadata()
     metadata[client_id] = file_metadata
     save_metadata(metadata)
+
+    # Update client's IP if changed
+    clients = load_clients()
+    if client_id in clients:
+        old_ip = clients[client_id]["ip"]
+        new_ip = request.remote_addr
+        if old_ip != new_ip:
+            clients[client_id]["ip"] = new_ip
+            save_clients(clients)
+            print(f"Updated IP for {client_id}: {new_ip}")
+
     return jsonify({"message": "Metadata updated"})
 
 @app.route("/delete_file", methods=["POST"])
@@ -126,10 +186,24 @@ def handle_file_deletion():
 
 @app.route("/sync", methods=["GET"])
 def sync_files():
-    metadata = load_metadata()
-    clients = load_clients()
+    full_metadata = load_metadata()
+    full_clients = load_clients()
+
+    clients = {}
+    metadata = {}
+
+    # Filter only alive clients
+    for client_id, client_info in full_clients.items():
+        ip = client_info["ip"]
+        port = client_info["port"]
+        if is_client_alive(ip, port):
+            clients[client_id] = client_info
+            if client_id in full_metadata:
+                metadata[client_id] = full_metadata[client_id]
+
     sync_instructions = {}
 
+    # Build full file index
     all_files = set()
     file_locations = {}
 
@@ -143,11 +217,8 @@ def sync_files():
     for client_id, client_files in metadata.items():
         sync_instructions[client_id] = {"delete_files": []}
 
-        for file_name in list(client_files.keys()):
-            if file_name not in all_files:
-                sync_instructions[client_id]["delete_files"].append(file_name)
-
         for file_name in all_files:
+            # File is missing in this client
             if file_name not in client_files:
                 versions = []
                 for peer_id in file_locations[file_name]:
@@ -157,33 +228,39 @@ def sync_files():
                         "hash": peer_info["hash"],
                         "last_modified": peer_info["last_modified"]
                     })
-                latest = max(versions, key=lambda x: x["last_modified"])
-                peer_info = clients[latest["client_id"]]
-                if is_client_alive(peer_info["ip"], peer_info["port"]):
+                if versions:
+                    latest = max(versions, key=lambda x: x["last_modified"])
+                    peer_info = clients[latest["client_id"]]
                     sync_instructions[client_id][file_name] = {
                         "ip": peer_info["ip"],
                         "port": peer_info["port"],
                         "sync_folder": peer_info["sync_folder"]
                     }
+
+            # File exists, but maybe outdated version
             else:
-                local_hash = client_files[file_name]["hash"]
-                all_hashes = {
-                    peer: metadata[peer][file_name]["hash"]
-                    for peer in file_locations[file_name]
-                }
-                if len(set(all_hashes.values())) > 1:
-                    latest_peer = max(
-                        file_locations[file_name],
-                        key=lambda x: metadata[x][file_name]["last_modified"]
-                    )
-                    if client_id != latest_peer:
-                        peer_info = clients[latest_peer]
-                        if is_client_alive(peer_info["ip"], peer_info["port"]):
-                            sync_instructions[client_id][file_name] = {
-                                "ip": peer_info["ip"],
-                                "port": peer_info["port"],
-                                "sync_folder": peer_info["sync_folder"]
-                            }
+                client_file_info = client_files[file_name]
+                versions = []
+                for peer_id in file_locations[file_name]:
+                    peer_info = metadata[peer_id][file_name]
+                    versions.append({
+                        "client_id": peer_id,
+                        "hash": peer_info["hash"],
+                        "last_modified": peer_info["last_modified"]
+                    })
+
+                if versions:
+                    # Get latest version across all alive clients
+                    latest = max(versions, key=lambda x: x["last_modified"])
+
+                    # If client's file hash != latest file hash
+                    if client_file_info["hash"] != latest["hash"]:
+                        peer_info = clients[latest["client_id"]]
+                        sync_instructions[client_id][file_name] = {
+                            "ip": peer_info["ip"],
+                            "port": peer_info["port"],
+                            "sync_folder": peer_info["sync_folder"]
+                        }
 
     return jsonify(sync_instructions)
 
@@ -201,4 +278,5 @@ def get_clients():
 
 if __name__ == "__main__":
     initialize_files()
+    threading.Thread(target=ip_monitoring_thread, daemon=True).start()
     app.run(host="0.0.0.0", port=5000, debug=True)
