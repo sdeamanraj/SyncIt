@@ -5,7 +5,6 @@ import socket
 import time
 import threading
 from flask import Flask, request, jsonify
-from pymongo import MongoClient
 
 app = Flask(__name__)
 
@@ -62,52 +61,6 @@ def is_client_alive(ip, port, timeout=2):
             return True
     except:
         return False
-
-# ------------------ Handling Dynamic IP change ------------------
-
-def update_server_ip_in_mongo(new_ip):
-    try:
-        client = MongoClient("mongodb+srv://amanrajmsrit:Project%4016@syncit.hehvd.mongodb.net/?retryWrites=true&w=majority", serverSelectionTimeoutMS=5000)
-        db = client['sync_db']
-        collection = db['device_info']
-
-        collection.update_one(
-            {"server_name": SERVER_NAME},
-            {"$set": {"ip": new_ip, "last_updated": time.time()}},
-            upsert=True
-        )
-        print(f"Updated server IP in MongoDB: {new_ip}")
-    except Exception as e:
-        print(f"Error updating server IP in MongoDB: {e}")
-
-def get_current_server_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(2)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception as e:
-        print(f"Failed to get current server IP: {e}")
-        return None
-
-def ip_monitoring_thread():
-    previous_ip = None
-    while True:
-        current_ip = get_current_server_ip()
-        if current_ip:
-            if previous_ip != current_ip:
-                print(f"Server IP changed from {previous_ip} to {current_ip}")
-                update_server_ip_in_mongo(current_ip)
-                previous_ip = current_ip
-            else:
-                print("Server IP unchanged.")
-        else:
-            print("Cannot detect current IP.")
-
-        # Sleep for 1 hour (3600 seconds)
-        time.sleep(3600)
 
 # ------------------ Client Endpoints ------------------
 
@@ -278,5 +231,4 @@ def get_clients():
 
 if __name__ == "__main__":
     initialize_files()
-    threading.Thread(target=ip_monitoring_thread, daemon=True).start()
     app.run(host="0.0.0.0", port=5000, debug=True)

@@ -8,7 +8,6 @@ import time
 import threading
 import webbrowser
 from flask import Flask, jsonify, send_file, request, render_template
-from pymongo import MongoClient
 from tqdm import tqdm
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -33,16 +32,17 @@ def index():
 
 @app.route("/submit", methods=["POST"])
 def handle_form():
-    global CLIENT_ID, SYNC_FOLDER, METADATA_FILE, SERVER_URL, SYNC_TIME
+    global CLIENT_ID, SYNC_FOLDER, METADATA_FILE, SERVER_URL, SERVER_NAME, SYNC_TIME
 
     CLIENT_ID = request.form["client_id"]
     SYNC_FOLDER = request.form["folder_path"]
     SERVER_URL = f"http://{request.form['server_url']}:5000"
     METADATA_FILE = f"./{CLIENT_ID}_metadata.json"
     SYNC_TIME = int(request.form["sync_duration"])
+    fetch_server_name()
 
     with open(SETUP_FILE, "w") as f:
-        f.write(f"{CLIENT_ID}\n{SYNC_FOLDER}\n{SERVER_URL}\n{SYNC_TIME}")
+        f.write(f"{CLIENT_ID}\n{SYNC_FOLDER}\n{SERVER_URL}\n{SERVER_NAME}\n{SYNC_TIME}")
 
     threading.Thread(target=start_sync_process, daemon=True).start()
     return '''
@@ -154,7 +154,8 @@ def register_with_server():
             print(response.json())
             return True
         except requests.exceptions.RequestException:
-            print("Server unreachable. Retrying in 60 seconds...")
+            print("Server offline... Trying local rediscovery...")
+            rediscover_server_locally()
             time.sleep(60)
 
 def scan_folder():
@@ -179,6 +180,7 @@ def update_server_metadata():
             break
         except requests.exceptions.RequestException:
             print("Failed to update server metadata. Retrying in 60 seconds...")
+            rediscover_server_locally()
             time.sleep(60)
 
 def notify_server_file_deleted(file_name):
@@ -278,20 +280,24 @@ class SyncFolderMonitor(FileSystemEventHandler):
 def update_file_metadata(file_path):
     metadata = load_metadata()
     file_name = os.path.basename(file_path)
-    try:
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            with open(file_path, "rb") as f:
-                f.read(1)
-            metadata[file_name] = {
-                "size": os.path.getsize(file_path),
-                "hash": compute_file_hash(file_path),
-                "last_modified": os.path.getmtime(file_path)
-            }
-            save_metadata(metadata)
-        else:
-            print(f"File {file_path} is empty or not ready yet. Skipping metadata update.")
-    except Exception as e:
-        print(f"Error reading file {file_path}: {e}. Skipping this file.")
+
+    # Retry logic for locked/incomplete files
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            if os.path.exists(file_path):
+                metadata[file_name] = {
+                    "size": os.path.getsize(file_path),
+                    "hash": compute_file_hash(file_path),
+                    "last_modified": os.path.getmtime(file_path)
+                }
+                save_metadata(metadata)
+                return
+        except (PermissionError, OSError) as e:
+            print(f"Error reading file {file_path}: {e}. Retrying ({attempt+1}/{max_attempts})...")
+            time.sleep(1)
+
+    print(f"Skipping {file_path} after {max_attempts} failed attempts.")
 
 def start_monitoring():
     observer = Observer()
@@ -306,23 +312,29 @@ def start_monitoring():
 
 # ------------------ Handling Dynamic IP change ------------------
 
-def check_server_ip_from_mongo():
+def rediscover_server_locally():
     global SERVER_URL
-    try:
-        client = MongoClient("mongodb+srv://amanrajmsrit:Project%4016@syncit.hehvd.mongodb.net/?retryWrites=true&w=majority")
-        db = client['sync_db']
-        collection = db['device_info']
+    port = 5000
+    target_name = SERVER_NAME
 
-        server_info = collection.find_one({"server_name": SERVER_NAME})
-        if server_info:
-            new_ip = server_info["ip"]
-            if new_ip and new_ip != SERVER_URL.split("//")[1].split(":")[0]:
-                print(f"Server IP has changed. Updating to {new_ip}")
-                SERVER_URL = f"http://{new_ip}:5000"
-            else:
-                print("Server IP not changed or not updated yet.")
-    except Exception as e:
-        print(f"Error checking server IP from Mongo: {e}")
+    hostname = socket.gethostname()
+    local_ip = socket.gethostbyname(hostname)
+    ip_parts = local_ip.split('.')
+    subnet = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
+    network = ipaddress.ip_network(subnet, strict=False)
+
+    for ip in network.hosts():
+        try:
+            r = requests.get(f"http://{ip}:{port}/server_name", timeout=0.5)
+            if r.status_code == 200 and r.json().get("name") == target_name:
+                print(f"Rediscovered server at new IP: {ip}")
+                SERVER_URL = f"http://{ip}:{port}"
+                return True
+        except:
+            pass
+
+    print("Could not rediscover server locally.")
+    return False
 
 # ------------------ Periodic Tasks ------------------
 
@@ -337,18 +349,14 @@ def server_check():
                 check_sync()
             time.sleep(SYNC_TIME)
         except requests.exceptions.RequestException:
-            print("Server offline...")
-            try:
-                check_server_ip_from_mongo()
-            except Exception as e:
-                print(f"Error while checking MongoDB for server IP: {e}")
+            print("Server offline... Trying local rediscovery...")
+            rediscover_server_locally()
             time.sleep(60)
 
 def start_sync_process():
     initialize_client()
     register_with_server()
     scan_folder()
-    fetch_server_name()
     update_server_metadata()
 
     threading.Thread(target=server_check, daemon=True).start()
@@ -388,7 +396,8 @@ if __name__ == "__main__":
     #         CLIENT_ID = lines[0]
     #         SYNC_FOLDER = lines[1]
     #         SERVER_URL = lines[2]
-    #         SYNC_TIME = int(lines[3])
+    #         SERVER_NAME = lines[3]
+    #         SYNC_TIME = int(lines[4])
     #         METADATA_FILE = f"./{CLIENT_ID}_metadata.json"
 
     #     threading.Thread(target=start_sync_process, daemon=True).start()
