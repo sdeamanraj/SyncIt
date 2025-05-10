@@ -329,6 +329,15 @@ def rediscover_server_locally():
             if r.status_code == 200 and r.json().get("name") == target_name:
                 print(f"Rediscovered server at new IP: {ip}")
                 SERVER_URL = f"http://{ip}:{port}"
+                # Update the client setup file with the new IP
+                if os.path.exists(SETUP_FILE):
+                    with open(SETUP_FILE, "r") as f:
+                        lines = f.read().splitlines()
+                    if len(lines) >= 4:
+                        lines[2] = SERVER_URL  # Update server IP line
+                        with open(SETUP_FILE, "w") as f:
+                            f.write("\n".join(lines))
+                        print(f"Updated new SERVER_URL in {SETUP_FILE}: {SERVER_URL}")
                 return True
         except:
             pass
@@ -387,18 +396,18 @@ def delete_requested_file():
 # ------------------ Main Entry ------------------
 
 if __name__ == "__main__":
-    # if not os.path.exists(SETUP_FILE):
+    if not os.path.exists(SETUP_FILE):
         threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{CLIENT_PORT}")).start()
         app.run(host="0.0.0.0", port=CLIENT_PORT)
-    # else:
-    #     with open(SETUP_FILE, "r") as f:
-    #         lines = f.read().splitlines()
-    #         CLIENT_ID = lines[0]
-    #         SYNC_FOLDER = lines[1]
-    #         SERVER_URL = lines[2]
-    #         SERVER_NAME = lines[3]
-    #         SYNC_TIME = int(lines[4])
-    #         METADATA_FILE = f"./{CLIENT_ID}_metadata.json"
+    else:
+        with open(SETUP_FILE, "r") as f:
+            lines = f.read().splitlines()
+            CLIENT_ID = lines[0]
+            SYNC_FOLDER = lines[1]
+            SERVER_URL = lines[2]
+            SERVER_NAME = lines[3]
+            SYNC_TIME = int(lines[4])
+            METADATA_FILE = f"./{CLIENT_ID}_metadata.json"
 
-    #     threading.Thread(target=start_sync_process, daemon=True).start()
-    #     app.run(host="0.0.0.0", port=CLIENT_PORT)
+        threading.Thread(target=start_sync_process, daemon=True).start()
+        app.run(host="0.0.0.0", port=CLIENT_PORT)
