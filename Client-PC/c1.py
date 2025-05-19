@@ -21,6 +21,7 @@ SYNC_FOLDER = ""
 CLIENT_ID = ""
 METADATA_FILE = ""
 SYNC_TIME = 30
+RETRY_TIME = 60
 SERVER_NAME = ""
 currently_downloading = False
 
@@ -155,8 +156,8 @@ def register_with_server():
             return True
         except requests.exceptions.RequestException:
             print("Server offline... Trying local rediscovery...")
-            rediscover_server_locally()
-            time.sleep(60)
+            if(rediscover_server_locally() == False):
+                time.sleep(RETRY_TIME)
 
 def scan_folder():
     metadata = {}
@@ -180,8 +181,8 @@ def update_server_metadata():
             break
         except requests.exceptions.RequestException:
             print("Failed to update server metadata. Retrying in 60 seconds...")
-            rediscover_server_locally()
-            time.sleep(60)
+            if(rediscover_server_locally() == False):
+                time.sleep(RETRY_TIME)
 
 def notify_server_file_deleted(file_name):
     while True:
@@ -359,8 +360,8 @@ def server_check():
             time.sleep(SYNC_TIME)
         except requests.exceptions.RequestException:
             print("Server offline... Trying local rediscovery...")
-            rediscover_server_locally()
-            time.sleep(60)
+            if(rediscover_server_locally() == False):
+                time.sleep(RETRY_TIME)
 
 def start_sync_process():
     initialize_client()
